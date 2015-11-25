@@ -1,12 +1,12 @@
 ﻿# Fast FIT parser written in Python
 # TODO: cythonize it
-# TODO: pythonize class member names
 
 import io
 import struct
 from enum import IntEnum
 
 # Import cythonized fast CRC16 computation algorithm
+
 from crc import compute_crc
 
 # FIT file declarations. This is a whole whack of static definitions
@@ -211,8 +211,14 @@ class GlobalMessageDecl(IntEnum):
     cadence_zone = 131
     memo_glob = 145
 
-# Internal helper methods
-def read_byte(stream):
+# Internal helper methods for reading integers from streams
+# TODO: convert these methods into static class methods where we switch on a global
+# endian-ness flag
+
+def read_int8(stream):
+    return int.from_bytes(stream.read(1), byteorder = "little", signed = True)
+
+def read_uint8(stream):
     return int.from_bytes(stream.read(1), byteorder = "little", signed = False)
 
 def read_int16(stream):
@@ -221,14 +227,17 @@ def read_int16(stream):
 def read_uint16(stream):
     return int.from_bytes(stream.read(2), byteorder = "little", signed = False)
 
+def read_int32(stream):
+    return int.from_bytes(stream.read(4), byteorder = "little", signed = True)
+
 def read_uint32(stream):
     return int.from_bytes(stream.read(4), byteorder = "little", signed = False)
 
 class FileHeader:
     def __init__(self, stream):
         self.stream = stream
-        self.size = read_byte(stream)
-        self.protocol_version = read_byte(stream)
+        self.size = read_uint8(stream)
+        self.protocol_version = read_uint8(stream)
         self.profile_version = read_int16(stream)
         self.data_size = read_uint32(stream)
 
@@ -244,17 +253,20 @@ class FileHeader:
         if self.size > 12:
             self.CRC = int.from_bytes(stream.read(2), byteorder = "little")
 
+# Definitions are runtime objects that are created by parsing the .FIT files.
+# Fields and Messages have definitions that must be read from the file being 
+# parsed.
 
 class FieldDefinition:
     def __init__(self, stream, current_offset):
-        self.field_definition_number = read_byte(stream)
-        self.field_size = read_byte(stream)
+        self.field_definition_number = read_uint8(stream)
+        self.field_size = read_uint8(stream)
         self.field_offset = current_offset
-        self.field_type = read_byte(stream)
+        self.field_type = read_uint8(stream)
 
 class MessageDefinition:
     def __init__(self, header, stream):
-        reserved = read_byte(stream)
+        reserved = read_uint8(stream)
 
         # 0 == Definition and Data messages are little-endian
         # 1 == Definition and Data messages are big-endian
@@ -262,12 +274,12 @@ class MessageDefinition:
         # TODO: actually do something with this flag. right now everything
         # that we see is little-endian
 
-        self.architecture = read_byte(stream)
+        self.architecture = read_uint8(stream)
 
         self.global_message_number = read_uint16(stream)
 
         self.field_definitions = []
-        field_count = read_byte(stream)
+        field_count = read_uint8(stream)
         current_offset = 0
 
         for i in range(field_count):
@@ -279,6 +291,10 @@ class MessageDefinition:
 
     def MessageDefinitionSize(self):
         return len(self.field_definitions) * 3 + 5
+
+# A Message object represents one of the (many) message types 
+# that are defined in a .fit file. A Message object contains a 
+# byte array that contains the actual data from the file.
 
 class Message:
     def __init__(self, header, message_definition, stream):
@@ -297,12 +313,52 @@ class Message:
         for field_definition in self.message_definition.field_definitions:
             if field_definition.field_definition_number == field_number:
                 if not self._is_initialized:
-                    self.stream = io.BytesIO(self.message_data)
+                    self._stream = io.BytesIO(self.message_data)
                     self._is_initialized = True
-                self.stream.seek(field_definition.field_offset)
+                self._stream.seek(field_definition.field_offset)
                 return field_definition
         return None
                     
+    # Retrieve a field from the message, given a field_decl enum whose value
+    # is an integer field number.
+
+    def get(self, field_decl):
+
+        field_definition = self._get_field_definition(field_decl)
+        if field_definition is not None: 
+            field_type = FieldType(field_definition.field_type)
+
+            if field_type is FieldType.int8:
+                return read_int8(self._stream)
+
+            elif field_type is FieldType.uint8:
+                return read_uint8(self._stream)
+
+            elif field_type is FieldType.uint8z:
+                value = read_uint8(self._stream)
+                return value if value != 0 else None
+
+            elif field_type is FieldType.int16:
+                return read_int16(self._stream)
+
+            elif field_type is FieldType.uint16:
+                return read_uint16(self._stream)
+
+            elif field_type is FieldType.uint16z:
+                value = read_uint16(self._stream)
+                return value if value != 0 else None 
+
+            elif field_type is FieldType.int32:
+                return read_int32(self._stream)
+
+            elif field_type is FieldType.uint32:
+                return read_uint32(self._stream)
+
+            elif field_type is FieldType.uint32z:
+                value = read_uint32(self._stream)
+                return value if value != 0 else None
+
+        return None
 
 # Function that parses a fit file. Note that this is a generator.
 def parse_fit_file(path):
@@ -326,7 +382,7 @@ def parse_fit_file(path):
     local_message_definitions = {}
 
     while bytes_read < bytes_to_read:
-        header = read_byte(stream)
+        header = read_uint8(stream)
 
         # Normal header (vs. timestamp offset header is indicated by bit 7)
         # Message type is indicated by bit 6 
@@ -367,6 +423,12 @@ filename = "large_file.fit"
 messages = []
 for message in parse_fit_file(filename):
     # TODO: stuff things into a data frame
+    if message.message_definition.global_message_number == GlobalMessageDecl.record:
+        power = message.get(RecordDecl.power)
+        if power is not None:
+            print(power)
+        else:
+            print("uh oh")
     messages.append(message)
 
 print(len(messages))
