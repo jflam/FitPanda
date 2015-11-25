@@ -1,6 +1,7 @@
 ﻿# Fast FIT parser written in Python
 # TODO: cythonize it
 
+from datetime import datetime, tzinfo
 import io
 import struct
 from enum import IntEnum
@@ -297,6 +298,13 @@ class MessageDefinition:
 # byte array that contains the actual data from the file.
 
 class Message:
+
+    # Compute some constants that will be used in this class
+
+    fit_zero_time = datetime(1989, 12, 31, 0, 0, 0, 0)
+    posix_zero_time = datetime(1970, 1, 1, 0, 0, 0, 0)
+    offset_seconds = fit_zero_time - posix_zero_time
+
     def __init__(self, header, message_definition, stream):
         self.header = header
         self.message_definition = message_definition
@@ -359,6 +367,33 @@ class Message:
                 return value if value != 0 else None
 
         return None
+
+    # Read the field described by field_decl as a Python datetime object
+
+    def get_as_datetime(self, field_decl):
+        field_definition = self._get_field_definition(field_decl)
+        if field_definition is not None: 
+            field_type = FieldType(field_definition.field_type)
+
+        if field_type is FieldType.uint32:
+            timestamp = read_uint32(self._stream)
+            if timestamp < 0x10000000:
+
+                # The documentation claims that this is a "system time" value. I don't know what
+                # this is - what system? The local system? Right now I'm returning None here 
+                # since I don't understand how to compute this value given the information 
+                # available. It's entirely possible that this is just a datetime.fromtimestamp()
+                # call without the FIT offset computation.
+
+                return None
+            else:
+
+                # Need to add difference between UTC 00:00 Dec 31 1989 and UTC 00:00 Jan 01 1970
+                # to generate a legal Unix timestamp. This was pre-computed in the class
+
+                return datetime.fromtimestamp(timestamp + Message.offset_seconds.total_seconds())
+        else:
+            return None
 
 # Function that parses a fit file. Note that this is a generator.
 def parse_fit_file(path):
@@ -424,7 +459,14 @@ messages = []
 for message in parse_fit_file(filename):
     # TODO: stuff things into a data frame
     if message.message_definition.global_message_number == GlobalMessageDecl.record:
+        # TODO: one time dump of all of the field types in the message definition
+        for field_definition in message.message_definition.field_definitions:
+            print(RecordDecl(field_definition.field_definition_number).name)
+
+        current_datetime = message.get_as_datetime(RecordDecl.time_stamp)
         power = message.get(RecordDecl.power)
+        print(current_datetime, power)
+
         if power is not None:
             print(power)
         else:
