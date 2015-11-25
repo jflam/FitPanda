@@ -1,9 +1,215 @@
-# Fast FIT parser written in Python
+﻿# Fast FIT parser written in Python
 # TODO: cythonize it
+# TODO: pythonize class member names
 
 import io
 import struct
+from enum import IntEnum
+
+# Import cythonized fast CRC16 computation algorithm
 from crc import compute_crc
+
+# FIT file declarations. This is a whole whack of static definitions
+# based on my reading of the .FIT specification. All of this makes
+# it easier for the user to type in readable names in their code.
+# Note that declarations != definitions. Later in this file, you will
+# see definitions, which are runtime, dynamic definitions as read
+# from the .FIT file being parsed. 
+#
+# TODO: write some examples here
+# 
+# A key element of the parser is how it will cleanly map a declaration 
+# (a statement of what the caller wants) to a definition (metadata about 
+# where that field is stored within a binary record). This lookup occurs
+# at runtime, where a user provides a FieldDecl and the Message object
+# will look up its internal FieldDefinition object to compute the offset
+# into the record where the data is stored. The FieldDecl contains a 
+# field number which is used to lookup the corresponding FieldDefinition
+# within the Message object. Note that the FIT specifications contain
+# *many* aliases for FieldDecls. However, the authoritative representation
+# of the field is always the FieldDefinition, which is what was actually
+# stored in the file. So we always do a one-way lookup from a FieldDecl
+# to the FieldDefinition, never the other way around.
+
+
+# Events are records that can appear anywhere within a .FIT
+# file. This enumeration describes the types of valid events.
+
+class Event(IntEnum):
+    timer = 0,
+    workout = 3,
+    workout_step = 4,
+    power_down = 5,
+    power_up = 6,
+    off_course = 7,
+    session = 8,
+    lap = 9,
+    course_point = 10,
+    battery = 11,
+    virtual_partner_pace = 12,
+    hr_high_alert = 13,
+    hr_low_alert = 14,
+    speed_high_alert = 15,
+    speed_low_alert = 16,
+    cad_high_alert = 17,
+    cad_low_alert = 18,
+    power_high_alert = 19,
+    power_low_alert = 20,
+    recovery_hr = 21,
+    battery_low = 22,
+    time_duration_alert = 23,
+    distance_duration_alert = 24,
+    calorie_duration_alert = 25,
+    activity = 26,
+    fitness_equipment = 27,
+    length = 28,
+    user_marker = 32,
+    sport_point = 33,
+    calibration = 36,
+    invalid = 0xFF
+
+# This enumeration describes the type of an event
+
+class EventType(IntEnum):
+    start = 0,
+    stop = 1,
+    consecutive_depreciated = 2,
+    marker = 3,
+    stop_all = 4,
+    begin_depreciated = 5,
+    end_depreciated = 6,
+    end_all_depreciated = 7,
+    stop_disable = 8,
+    stop_disableAll = 9,
+    invalid = 0xFF
+
+# We need some more information than what is possible with Enums
+# alone for field definitions.
+
+# TODO: why does a FieldDecl contain the is_enum or is_array fields?
+# I don't think these are valid here, which then reduces FieldDecls to
+# simple enums. There is no way to lookup a field number and determine 
+# if it is an enum or an array in the actual record (since there is 
+# the possibility of aliases for FieldDecls). Therefore the FieldDefinition
+# must be treated as the source of truth for whether something is an array
+# or if it is an enum.
+
+# The FieldType enumeration defines all of the legal field types that can be
+# found within a FieldDefinition
+
+class FieldType(IntEnum):
+    enum = 0x00
+    int8 = 0x01
+    uint8 = 0x02
+    int16 = 0x83
+    uint16 = 0x84
+    int32 = 0x85
+    uint32 = 0x86
+    string = 0x07
+    float32 = 0x88
+    float64 = 0x89
+    uint8z = 0x0a    # non-zero 8 bit unsigned integer
+    uint16z = 0x8b
+    uint32z = 0x8c
+    byte_array = 0x0d
+
+# Record declarations for specific record types. This way, a user can
+# simply reference a field like RecordDecl.Speed to retrieve that field
+# from a record.
+
+class RecordDecl(IntEnum):
+    position_lat = 0
+    position_long = 1
+    altitude = 2
+    heart_rate = 3
+    cadence = 4
+    distance = 5
+    speed = 6
+    power = 7
+    compressed_speed_distance = 8
+    grade = 9
+    resistance = 10
+    time_from_course = 11
+    cycle_length = 12
+    temperature = 13
+    speed_1s = 17
+    cycles = 18
+    total_cycles = 19
+    compressed_accumulated_power = 28
+    accumulated_power = 29
+    left_right_balance = 30
+    gps_accuracy = 31
+    vertical_speed = 32
+    calories = 33
+    vertical_oscillation = 39
+    stance_time_percent = 40
+    stance_time = 41
+    activity_type = 42
+    left_torque_effectiveness = 43
+    right_torque_effectiveness = 44
+    left_pedal_smoothness = 45
+    right_pedal_smoothness = 46
+    combined_pedal_smoothness = 47
+    time_128 = 48
+    stroke_type = 49
+    zone = 50
+    ball_speed = 51
+    cadence_256 = 52
+    total_hemoglobin_conc = 54
+    total_hemoglobin_conc_min = 55
+    total_hemoglobin_conc_max = 56
+    saturated_hemoglobin_percent = 57
+    saturated_hemoglobin_percent_min = 58
+    saturated_hemoglobin_percent_max = 59
+    device_index = 62
+    time_stamp = 253
+
+# TODO: other types
+
+# Global message declarations - used to lookup up the type of a message
+
+class GlobalMessageDecl(IntEnum):
+    file_id = 0
+    capabilities = 1
+    device_settings = 2
+    user_profile = 3
+    hrm_profile = 4
+    sdm_profile = 5
+    bike_profile = 6
+    zones_target = 7
+    hr_zone = 8
+    power_zone = 9
+    met_zone = 10
+    sport = 12
+    goal = 15
+    session = 18
+    lap = 19
+    record = 20
+    event = 21
+    device_info = 23
+    workout = 26
+    workout_step = 27
+    schedule = 28
+    weight_scale = 30
+    course = 31
+    course_point = 32
+    totals = 33
+    activity = 34
+    software = 35
+    file_capabilities = 37
+    mesg_capabilities = 38
+    field_capabilities = 39
+    file_creator = 49
+    blood_pressure = 51
+    speed_zone = 53
+    monitoring = 55
+    hrv = 78
+    length = 101
+    monitoring_info = 103
+    pad = 105
+    slave_device = 106
+    cadence_zone = 131
+    memo_glob = 145
 
 # Internal helper methods
 def read_byte(stream):
@@ -21,10 +227,10 @@ def read_uint32(stream):
 class FileHeader:
     def __init__(self, stream):
         self.stream = stream
-        self.Size = read_byte(stream)
-        self.ProtocolVersion = read_byte(stream)
-        self.ProfileVersion = read_int16(stream)
-        self.DataSize = read_uint32(stream)
+        self.size = read_byte(stream)
+        self.protocol_version = read_byte(stream)
+        self.profile_version = read_int16(stream)
+        self.data_size = read_uint32(stream)
 
         # Assert .fit file signature
         b1 = stream.read(1)
@@ -35,15 +241,16 @@ class FileHeader:
         assert b1 == b'.' and b2 == b'F' and b3 == b'I' and b4 == b'T'
 
         # Read optional CRC
-        if self.Size > 12:
+        if self.size > 12:
             self.CRC = int.from_bytes(stream.read(2), byteorder = "little")
+
 
 class FieldDefinition:
     def __init__(self, stream, current_offset):
-        self.FieldDefinitionNumber = read_byte(stream)
-        self.FieldSize = read_byte(stream)
-        self.FieldOffset = current_offset
-        self.FieldType = read_byte(stream)
+        self.field_definition_number = read_byte(stream)
+        self.field_size = read_byte(stream)
+        self.field_offset = current_offset
+        self.field_type = read_byte(stream)
 
 class MessageDefinition:
     def __init__(self, header, stream):
@@ -57,59 +264,61 @@ class MessageDefinition:
 
         self.architecture = read_byte(stream)
 
-        self.GlobalMessageNumber = read_uint16(stream)
+        self.global_message_number = read_uint16(stream)
 
-        self.FieldDefinitions = []
+        self.field_definitions = []
         field_count = read_byte(stream)
         current_offset = 0
 
         for i in range(field_count):
             field_definition = FieldDefinition(stream, current_offset)
-            self.FieldDefinitions.append(field_definition)
-            current_offset += field_definition.FieldSize
+            self.field_definitions.append(field_definition)
+            current_offset += field_definition.field_size
 
-        self.Size = current_offset
+        self.size = current_offset
 
     def MessageDefinitionSize(self):
-        return len(self.FieldDefinitions) * 3 + 5
+        return len(self.field_definitions) * 3 + 5
 
 class Message:
     def __init__(self, header, message_definition, stream):
         self.header = header
         self.message_definition = message_definition
-        self.message_data = stream.read(message_definition.Size)
-        self.is_initialized = False
+        self.message_data = stream.read(message_definition.size)
+        self._is_initialized = False
 
     # Linear search through a Message's FieldDefinitions 
     # If found, will also guarantee that the internal BinaryReader
     # over the Message is initialized, and pointing at the start
     # of the field.
-    # Returns null if not found.
+    # Returns None if not found.
+
     def _get_field_definition(self, field_number):
-        for field_definition in self.message_definition.FieldDefinitions:
-            if field_definition.FieldDefinitionNumber == field_number:
-                if not self.is_initialized:
+        for field_definition in self.message_definition.field_definitions:
+            if field_definition.field_definition_number == field_number:
+                if not self._is_initialized:
                     self.stream = io.BytesIO(self.message_data)
-                    self.is_initialized = True
-                self.stream.seek(field_definition.FieldOffset)
+                    self._is_initialized = True
+                self.stream.seek(field_definition.field_offset)
                 return field_definition
         return None
                     
+
 # Function that parses a fit file. Note that this is a generator.
 def parse_fit_file(path):
     stream = io.open(path, "rb")
     file_header = FileHeader(stream)
     pos = stream.seek(0)
-    crc = compute_crc(stream, file_header.Size + file_header.DataSize)
+    crc = compute_crc(stream, file_header.size + file_header.data_size)
     file_crc = read_uint16(stream)
 
     # TODO: debug why CRC is failing with real files
     # print(pos, format(self.crc, "0x"), format(self.file_crc, "0x"))
 
     # Seek to the start of the data (past the file header)
-    pos = stream.seek(file_header.Size)
+    pos = stream.seek(file_header.size)
 
-    bytes_to_read = file_header.DataSize
+    bytes_to_read = file_header.data_size
     bytes_read = 0
 
     # Message definitions are parsed internally by the parser and not exposed to
@@ -149,8 +358,7 @@ def parse_fit_file(path):
             message = Message(header, current_message_definition, stream)
             yield message 
 
-            bytes_read += current_message_definition.Size + 1
-
+            bytes_read += current_message_definition.size + 1
 
 # Simple test harness
 # filename = "c:\\users\\jflam\\onedrive\\garmin\\2010-03-22-07-25-44.fit"
