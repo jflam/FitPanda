@@ -2,3 +2,4 @@
 *.pyd
 *.c
 build/
+.vs/
