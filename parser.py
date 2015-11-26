@@ -451,26 +451,43 @@ def parse_fit_file(path):
 
             bytes_read += current_message_definition.size + 1
 
+
+# TODO: move this to pandas_fit_parser.py when I actually understand names and modules!!!
+# Integration with pandas
+
+from enum import IntEnum
+from parser import *
+import pandas as pd
+
+def parse_fit_as_dataframe(path, columns):
+
+    # Initialize a dictionary containing names of columns names and empty lists
+    data = {}
+    for column in columns:
+        data[column.name] = []
+
+    for message in parse_fit_file(path):
+        if message.message_definition.global_message_number == GlobalMessageDecl.record:
+            for column in columns:
+                # Special case time stamp
+                if column is RecordDecl.time_stamp:
+                    data[column.name].append(message.get_as_datetime(column))
+                else:
+                    data[column.name].append(message.get(column))
+
+    return pd.DataFrame(data)
+
 # Simple test harness
 # filename = "c:\\users\\jflam\\onedrive\\garmin\\2010-03-22-07-25-44.fit"
+
+import time
 filename = "large_file.fit"
+start_time = time.time()
 
-messages = []
-for message in parse_fit_file(filename):
-    # TODO: stuff things into a data frame
-    if message.message_definition.global_message_number == GlobalMessageDecl.record:
-        # TODO: one time dump of all of the field types in the message definition
-        for field_definition in message.message_definition.field_definitions:
-            print(RecordDecl(field_definition.field_definition_number).name)
+fit = parse_fit_as_dataframe(filename, [RecordDecl.time_stamp, \
+                                        RecordDecl.power, \
+                                        RecordDecl.heart_rate, \
+                                        RecordDecl.cadence])
 
-        current_datetime = message.get_as_datetime(RecordDecl.time_stamp)
-        power = message.get(RecordDecl.power)
-        print(current_datetime, power)
-
-        if power is not None:
-            print(power)
-        else:
-            print("uh oh")
-    messages.append(message)
-
-print(len(messages))
+end_time = time.time()
+print("Elapsed time was %g seconds" % (end_time - start_time))
