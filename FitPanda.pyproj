@@ -5,7 +5,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>{72695aa7-8efe-48a1-9655-b3415948ff66}</ProjectGuid>
     <ProjectHome />
-    <StartupFile>parser.py</StartupFile>
+    <StartupFile>fit_parser_dataframe_tests.py</StartupFile>
     <SearchPath />
     <WorkingDirectory>.</WorkingDirectory>
     <OutputPath>.</OutputPath>
@@ -22,7 +22,9 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="crc_tests.py" />
-    <Compile Include="parser.py">
+    <Compile Include="fit_parser.py" />
+    <Compile Include="fit_parser_dataframe.py" />
+    <Compile Include="fit_parser_dataframe_tests.py">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="setup.py" />
