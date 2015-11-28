@@ -395,8 +395,27 @@ class Message:
         else:
             return None
 
-# Function that parses a fit file. Note that this is a generator.
 def parse_fit_file(path, validate_crc = False):
+    """Parse a fit file.
+
+    Parameters
+    ----------
+    path: string
+        Path to the .fit file
+    validate_crc: bool
+        Compute the CRC16 of the file and compare with embedded CRC16. Default is False.
+
+    Yields
+    ------
+    Message
+        Individual Message objects from the .fit file.
+
+    Examples
+    --------
+    >>> for message in parse_fit_file('fit_file.fit'):
+            pass
+    """
+
     stream = io.open(path, "rb")
     file_header = FileHeader(stream)
 
