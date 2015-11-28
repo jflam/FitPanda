@@ -326,4 +326,3 @@ def compute_crc(stream, stream_length):
         crc = (lookup ^ (crc >> 8))
 
     return crc
-
