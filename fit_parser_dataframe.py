@@ -11,7 +11,7 @@ def parse_fit_as_dataframe(path, columns):
     for column in columns:
         data[column.name] = []
 
-    for message in parse_fit_file(path):
+    for message in parse_fit_file(path, validate_crc = False):
         if message.message_definition.global_message_number == GlobalMessageDecl.record:
             for column in columns:
                 # Special case time stamp

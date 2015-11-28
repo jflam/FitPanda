@@ -396,18 +396,20 @@ class Message:
             return None
 
 # Function that parses a fit file. Note that this is a generator.
-def parse_fit_file(path):
+def parse_fit_file(path, validate_crc = False):
     stream = io.open(path, "rb")
     file_header = FileHeader(stream)
-    pos = stream.seek(0)
-    crc = compute_crc(stream, file_header.size + file_header.data_size)
-    file_crc = read_uint16(stream)
 
-    # TODO: debug why CRC is failing with real files
-    # print(pos, format(self.crc, "0x"), format(self.file_crc, "0x"))
+    if validate_crc:
+        pos = stream.seek(0)
+        crc = compute_crc(stream, file_header.size + file_header.data_size)
+        file_crc = read_uint16(stream)
 
-    # Seek to the start of the data (past the file header)
-    pos = stream.seek(file_header.size)
+        # TODO: debug why CRC is failing with real files
+        # print(pos, format(self.crc, "0x"), format(self.file_crc, "0x"))
+
+        # Seek to the start of the data (past the file header)
+        pos = stream.seek(file_header.size)
 
     bytes_to_read = file_header.data_size
     bytes_read = 0
